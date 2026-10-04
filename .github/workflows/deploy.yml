@@ -19,6 +19,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Comprobar la nube (Supabase)
+        run: node scripts/check-cloud.mjs
       - run: npm run build
       - name: Publicar en GitHub Pages (rama gh-pages)
         uses: peaceiris/actions-gh-pages@v4
