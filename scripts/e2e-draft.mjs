@@ -1,0 +1,32 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch().catch(() => chromium.launch({ executablePath: '/opt/pw-browsers/chromium' }));
+const ctx = await b.newContext({ viewport: { width: 390, height: 844 } });
+const p = await ctx.newPage();
+const errs = []; p.on('pageerror', (e) => errs.push(e.message));
+await p.goto('http://localhost:4173/');
+await p.waitForSelector('.obra-card');
+await p.click('text=Reforma casa Martínez');
+await p.click('.cta');
+await p.waitForSelector('.btn-copy');
+await p.click('.btn-copy');
+await p.fill('#add-material', 'Arena');
+await p.keyboard.press('Enter');
+await p.keyboard.type('2');
+await p.waitForTimeout(800);
+const url = p.url();
+await p.reload(); // el móvil cierra la app
+await p.goto(url);
+await p.waitForSelector('text=Tienes un parte sin guardar', { timeout: 5000 });
+await p.click('text=Recuperarlo');
+console.log('líneas recuperadas:', await p.$$eval('.line-name', (l) => l.map((x) => x.textContent)));
+await p.click('text=Guardar parte');
+await p.waitForSelector('.summary');
+await p.goto(url);
+await p.waitForTimeout(800);
+console.log('banner tras guardar:', await p.$('text=Tienes un parte sin guardar') ? 'SÍ (mal)' : 'no (bien)');
+// pantalla rota → aviso, no blanco
+await p.goto('http://localhost:4173/#/parte/no-existe');
+await p.waitForTimeout(500);
+console.log('parte inexistente:', (await p.textContent('main')).slice(0, 60));
+console.log('errores:', errs);
+await b.close();
