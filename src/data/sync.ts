@@ -135,6 +135,7 @@ export class SyncEngine {
 
   /** Sube todas las filas con cambios locales, tabla a tabla en orden de dependencias. */
   async push() {
+    await this.mergeSameDayReports();
     for (const t of SYNC_TABLES) {
       const rows = (await db.table(t).toArray()).filter((r: any) => r._dirty !== 0 && !r.example);
       if (!rows.length) continue;
@@ -155,6 +156,35 @@ export class SyncEngine {
           }
         });
       }
+    }
+  }
+
+  /**
+   * Dos personas con la misma cuenta pueden crear sin conexión el parte del mismo día y obra.
+   * Antes de subir, si en la nube ya existe ese parte, las líneas locales se pasan a él:
+   * queda un único parte con lo que apuntó cada uno.
+   */
+  async mergeSameDayReports() {
+    const local = (await db.reports.toArray()).filter((r) => r._dirty !== 0 && !r.example && !r.deleted_at);
+    if (!local.length) return;
+    const projectIds = [...new Set(local.map((r) => r.project_id))];
+    const { data, error } = await this.sb.from(REMOTE.reports).select('id,project_id,date,notes,created_at')
+      .in('project_id', projectIds).is('deleted_at', null);
+    if (error) throw error;
+    for (const r of local) {
+      const m = (data || []).find((x: any) => x.project_id === r.project_id && x.date === r.date && x.id !== r.id);
+      if (!m) continue;
+      await db.transaction('rw', [db.reports, db.labor, db.materialEntries, db.expenses], async () => {
+        // Estas escrituras sí cuentan como cambios locales: las líneas movidas se suben con el parte de la nube.
+        await db.labor.where('report_id').equals(r.id).modify({ report_id: m.id });
+        await db.materialEntries.where('report_id').equals(r.id).modify({ report_id: m.id });
+        await db.expenses.where('report_id').equals(r.id).modify({ report_id: m.id });
+        const notes = [m.notes, r.notes].filter((x) => x && String(x).trim()).join('\n');
+        const existing = await db.reports.get(m.id);
+        if (existing) await db.reports.update(m.id, { notes });
+        else await db.reports.add({ id: m.id, project_id: r.project_id, date: r.date, notes, created_at: new Date(m.created_at).toISOString(), updated_at: new Date().toISOString() });
+        await db.reports.delete(r.id); // nunca llegó a la nube
+      });
     }
   }
 

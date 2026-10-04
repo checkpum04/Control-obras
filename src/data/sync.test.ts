@@ -18,6 +18,12 @@ function fakeSupabase() {
         async upsert(rows: any[]) {
           if (sb.failNext) { sb.failNext = false; return { error: { message: 'Failed to fetch' } }; }
           // El servidor guarda como texto los numeric, igual que Postgres.
+          if (name === 'daily_reports') {
+            for (const r of rows) {
+              const clash = [...t(name).values()].find((x) => x.id !== r.id && !x.deleted_at && !r.deleted_at && x.project_id === r.project_id && x.date === r.date);
+              if (clash) return { error: { code: '23505', message: 'duplicate key value violates unique constraint "daily_reports_project_date"' } };
+            }
+          }
           for (const r of rows) t(name).set(r.id, JSON.parse(JSON.stringify({ ...r, hours: r.hours != null ? String(r.hours) : undefined })));
           clock += 1000;
           return { error: null };
@@ -26,7 +32,9 @@ function fakeSupabase() {
           let filter = (_r: any) => true;
           let range: [number, number] = [0, 1e9];
           const q: any = {
-            gt(col: string, v: string) { filter = (r) => r[col] > v; return q; },
+            gt(col: string, v: string) { const f = filter; filter = (r) => f(r) && r[col] > v; return q; },
+            in(col: string, vs: string[]) { const f = filter; filter = (r) => f(r) && vs.includes(r[col]); return q; },
+            is(col: string, v: null) { const f = filter; filter = (r) => f(r) && (r[col] ?? null) === v; return q; },
             order() { return q; },
             range(a: number, b: number) { range = [a, b]; return q; },
             then(res: any) {
@@ -148,5 +156,34 @@ describe('sincronización entre dos móviles', () => {
     useDB(B);
     await new SyncEngine(sb, 'u').syncNow();
     expect(await findReport(pid, '2026-10-03')).toBeTruthy();
+  });
+
+  it('dos personas apuntan sin conexión en la misma obra y día: se juntan en un solo parte', async () => {
+    useDB(A);
+    const pid = await saveProject({ name: 'Casa', client_name: '', status: 'en_curso' });
+    const a = new SyncEngine(sb, 'u');
+    await a.syncNow();
+    useDB(B);
+    const b = new SyncEngine(sb, 'u');
+    await b.syncNow();
+    // Los dos, sin conexión, crean el parte de hoy
+    await saveReport({ project_id: pid, date: '2026-10-05', notes: 'Padre: llegó el pedido', labor: [{ worker_name: 'Juan', hours: 8, rate_cents: 1800 }], materials: [], expenses: [] });
+    useDB(A);
+    await saveReport({ project_id: pid, date: '2026-10-05', notes: 'Jose: falta yeso', labor: [], materials: [{ material_name: 'Yeso', unit: 'saco', quantity: 4, unit_price_cents: 720 }], expenses: [] });
+    await a.syncNow();
+    expect(a.state.kind).toBe('idle');
+    useDB(B);
+    await b.syncNow();
+    expect(b.state).toMatchObject({ kind: 'idle', pending: 0 });
+    useDB(A);
+    await a.syncNow();
+    for (const d of [A, B]) {
+      useDB(d);
+      const data = await projectData(pid);
+      expect(data.reports).toHaveLength(1);
+      expect(sumTotals(data.labor, data.materials, data.expenses).totalCents).toBe(14400 + 2880);
+      expect(data.reports[0].notes).toContain('falta yeso');
+      expect(data.reports[0].notes).toContain('llegó el pedido');
+    }
   });
 });
