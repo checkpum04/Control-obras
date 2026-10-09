@@ -2,19 +2,23 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../data/db';
 import {
-  addAttachment, deleteAttachment, deleteExpense, getProject, listAttachments, listConcepts, projectData, saveExpense,
+  addAttachment, addPartidas, deleteAttachment, deleteExpense, getProject, listAttachments, listConcepts, movePartida, projectData,
+  saveExpense, saveTemplate, type PartidaSeed,
 } from '../data/repo';
-import { budgetStatus, sumTotals, round2 } from '../lib/calc';
+import { budgetStatus, sumTotals, round2, totalsByPartida, unitCost, EMPTY_TOTALS, type Totals } from '../lib/calc';
 import { euros, eurosRound, fmtDate, hours as fmtHours, number, parseMoney, pct, todayISO, weekday } from '../lib/format';
 import { navigate } from '../lib/router';
 import { BudgetMeter, ConfirmButton, CostBreakdown, Empty, HealthPill, Icon, Sheet, TopBar, toast } from '../components/ui';
 import { attachmentBlob } from '../data/cloud';
 import { DailyChart, type DayPoint } from '../components/DailyChart';
 import { AddWithSuggestions } from '../components/Autocomplete';
-import { EXPENSE_CATEGORIES, STATUS_LABEL, type Attachment, type AttachmentKind, type ExpenseConcept } from '../data/types';
+import { EXPENSE_CATEGORIES, NO_PARTIDA, STATUS_LABEL, type Attachment, type AttachmentKind, type ExpenseConcept, type Partida } from '../data/types';
+import { PartidaForm } from '../components/PartidaForm';
+import { PartidaPicker } from '../components/PartidaPicker';
 
 const TABS = [
   { key: 'resumen', label: 'Resumen' },
+  { key: 'partidas', label: 'Partidas' },
   { key: 'partes', label: 'Partes' },
   { key: 'trabajadores', label: 'Trabajadores' },
   { key: 'materiales', label: 'Materiales' },
@@ -68,6 +72,7 @@ export default function ProjectDetail({ id, tab = 'resumen' }: { id: string; tab
       </nav>
 
       {active === 'resumen' && <Summary project={project} address={project.address} totals={totals} s={s} data={data} />}
+      {active === 'partidas' && <PartidasTab data={data} projectId={id} />}
       {active === 'partes' && <Reports data={data} projectId={id} />}
       {active === 'trabajadores' && <WorkersTab data={data} />}
       {active === 'materiales' && <MaterialsTab data={data} />}
@@ -122,6 +127,8 @@ function Summary({ project, address, totals, s, data }: {
         <CostBreakdown t={totals} />
       </section>
 
+      <PartidasCard data={data} projectId={project.id} total={totals} />
+
       {days.length > 0 && (
         <section className="card">
           <h3 className="card-title">Coste por día {days.length === 30 && <small className="muted">(últimos 30)</small>}</h3>
@@ -157,6 +164,7 @@ function Reports({ data, projectId }: { data: Awaited<ReturnType<typeof projectD
         const M = data.materials.filter((m) => m.report_id === r.id);
         const E = data.expenses.filter((e) => e.report_id === r.id);
         const t = sumTotals(L, M, E);
+        const names = partidaNames(data.partidas, [...L, ...M, ...E]);
         return (
           <li key={r.id}>
             <button className="row-btn report-row" onClick={() => navigate(`/parte/${r.id}`)}>
@@ -167,6 +175,7 @@ function Reports({ data, projectId }: { data: Awaited<ReturnType<typeof projectD
               <div className="report-meta">
                 <span><span className="nw">{L.length} {L.length === 1 ? 'trabajador' : 'trabajadores'}</span> · <span className="num nw">{fmtHours(t.hours)}</span></span>
                 <span className="muted"><span className="nw">Materiales <span className="num">{eurosRound(t.materialsCents)}</span></span>{t.expensesCents ? <> · <span className="nw">Otros <span className="num">{eurosRound(t.expensesCents)}</span></span></> : null}</span>
+                {names && <span className="muted report-partidas">{names}</span>}
               </div>
               <strong className="report-total num">{eurosRound(t.totalCents)}</strong>
             </button>
@@ -178,7 +187,7 @@ function Reports({ data, projectId }: { data: Awaited<ReturnType<typeof projectD
 }
 
 // ───────── Trabajadores de la obra
-function WorkersTab({ data }: { data: Awaited<ReturnType<typeof projectData>> }) {
+export function WorkersTab({ data }: { data: Awaited<ReturnType<typeof projectData>> }) {
   const rows = useMemo(() => {
     const m = new Map<string, { name: string; hours: number; cost: number; days: Set<string>; rates: Set<number>; last: number; lastDate: string }>();
     const rDate = new Map(data.reports.map((r) => [r.id, r.date]));
@@ -215,7 +224,7 @@ function WorkersTab({ data }: { data: Awaited<ReturnType<typeof projectData>> })
 }
 
 // ───────── Materiales de la obra
-function MaterialsTab({ data }: { data: Awaited<ReturnType<typeof projectData>> }) {
+export function MaterialsTab({ data }: { data: Awaited<ReturnType<typeof projectData>> }) {
   const rows = useMemo(() => {
     const m = new Map<string, { name: string; unit: string; qty: number; cost: number }>();
     for (const x of data.materials) {
@@ -267,7 +276,7 @@ function ExpensesTab({ data, projectId }: { data: Awaited<ReturnType<typeof proj
             <li key={e.id} className="expense-row">
               <div>
                 <strong>{e.concept}</strong>
-                <span className="muted">{fmtDate(e.date)} · {e.category}{e.report_id ? ' · en parte' : ''}</span>
+                <span className="muted">{fmtDate(e.date)} · {e.category}{e.report_id ? ' · en parte' : ''}{partidaName(data.partidas, e.partida_id) ? ` · ${partidaName(data.partidas, e.partida_id)}` : ''}</span>
                 {e.note && <span className="muted small">{e.note}</span>}
                 {tickets?.get(e.id)?.map((a) => (
                   <button key={a.id} className="link small" onClick={() => setView(a)}><Icon name="receipt" size={14} /> {a.name}</button>
@@ -283,25 +292,29 @@ function ExpensesTab({ data, projectId }: { data: Awaited<ReturnType<typeof proj
           <li className="rows-total"><span>Total otros gastos</span><strong className="num">{euros(total)}</strong></li>
         </ul>
       )}
-      <ExpenseSheet open={open} onClose={() => setOpen(false)} projectId={projectId} />
+      <ExpenseSheet open={open} onClose={() => setOpen(false)} projectId={projectId} partidas={data.partidas} />
       <AttachmentViewer a={view} onClose={() => setView(null)} />
     </div>
   );
 }
 
-function ExpenseSheet({ open, onClose, projectId }: { open: boolean; onClose: () => void; projectId: string }) {
+export function ExpenseSheet({ open, onClose, projectId, partidas = [], partidaId = '' }: {
+  open: boolean; onClose: () => void; projectId: string; partidas?: Partida[]; partidaId?: string;
+}) {
   const concepts = useLiveQuery(listConcepts) || [];
-  const [f, setF] = useState({ concept: '', category: 'Otros', amount: '', date: todayISO(), note: '' });
+  const blank = () => ({ concept: '', category: 'Otros', amount: '', date: todayISO(), note: '', partida: partidaId });
+  const [f, setF] = useState(blank);
   const [files, setFiles] = useState<File[]>([]);
   const [err, setErr] = useState('');
-  useEffect(() => { if (open) { setF({ concept: '', category: 'Otros', amount: '', date: todayISO(), note: '' }); setFiles([]); setErr(''); } }, [open]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (open) { setF(blank()); setFiles([]); setErr(''); } }, [open]);
   const pick = (c: ExpenseConcept) => setF((x) => ({ ...x, concept: c.name, category: c.category, amount: c.last_amount_cents != null ? String(c.last_amount_cents / 100).replace('.', ',') : x.amount }));
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const amount = parseMoney(f.amount);
     if (!f.concept.trim()) return setErr('Escribe el concepto.');
     if (amount == null) return setErr('Escribe el importe.');
-    await saveExpense({ project_id: projectId, date: f.date, category: f.category, concept: f.concept, amount_cents: amount, note: f.note, files });
+    await saveExpense({ project_id: projectId, partida_id: f.partida || null, date: f.date, category: f.category, concept: f.concept, amount_cents: amount, note: f.note, files });
     toast('Gasto añadido');
     onClose();
   };
@@ -331,6 +344,14 @@ function ExpenseSheet({ open, onClose, projectId }: { open: boolean; onClose: ()
             {EXPENSE_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
           </select>
         </label>
+        {partidas.length > 0 && (
+          <label className="field"><span>Partida</span>
+            <select id="exp-partida" value={f.partida} onChange={(e) => setF({ ...f, partida: e.target.value })}>
+              <option value="">{NO_PARTIDA}</option>
+              {partidas.filter((p) => !p.archived || p.id === f.partida).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </label>
+        )}
         <label className="field"><span>Nota (opcional)</span>
           <input id="exp-note" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} />
         </label>
@@ -381,7 +402,7 @@ function FilesTab({ projectId }: { projectId: string }) {
 }
 
 /** URL local del archivo; si solo está en la nube, se descarga la primera vez que se ve. */
-function useObjectURL(a?: Attachment | null, enabled = true) {
+export function useObjectURL(a?: Attachment | null, enabled = true) {
   const [url, setUrl] = useState<string>();
   useEffect(() => {
     if (!a || !enabled) return;
@@ -392,7 +413,7 @@ function useObjectURL(a?: Attachment | null, enabled = true) {
   return url;
 }
 
-function Thumb({ a, onOpen }: { a: Attachment; onOpen: () => void }) {
+export function Thumb({ a, onOpen }: { a: Attachment; onOpen: () => void }) {
   const url = useObjectURL(a, a.mime.startsWith('image/'));
   return (
     <button className="thumb" onClick={onOpen}>
@@ -402,7 +423,7 @@ function Thumb({ a, onOpen }: { a: Attachment; onOpen: () => void }) {
   );
 }
 
-function AttachmentViewer({ a, onClose }: { a: Attachment | null; onClose: () => void }) {
+export function AttachmentViewer({ a, onClose }: { a: Attachment | null; onClose: () => void }) {
   const url = useObjectURL(a);
   return (
     <Sheet open={!!a} onClose={onClose} title={a?.name || ''}>
@@ -416,6 +437,194 @@ function AttachmentViewer({ a, onClose }: { a: Attachment | null; onClose: () =>
             onConfirm={async () => { await deleteAttachment(a.id); toast('Archivo borrado'); onClose(); }} />
         </div>
       )}
+    </Sheet>
+  );
+}
+
+// ───────── Partidas
+export const partidaName = (partidas: Partida[], id?: string | null) => (id ? partidas.find((p) => p.id === id)?.name : undefined);
+
+/** "Pladur, Albañilería" para las líneas de un parte (vacío si ninguna tiene partida). */
+export function partidaNames(partidas: Partida[], lines: { partida_id?: string | null }[]) {
+  if (!partidas.length) return '';
+  const names = [...new Set(lines.map((l) => partidaName(partidas, l.partida_id) || NO_PARTIDA))];
+  return names.length === 1 && names[0] === NO_PARTIDA ? '' : names.join(', ');
+}
+
+type Data = Awaited<ReturnType<typeof projectData>>;
+const byPartida = (data: Data) => totalsByPartida(data.labor, data.materials, data.expenses, new Set(data.partidas.map((p) => p.id)));
+
+/** Tarjeta del resumen: coste de cada partida y total de la obra. */
+function PartidasCard({ data, projectId, total }: { data: Data; projectId: string; total: Totals }) {
+  const t = byPartida(data);
+  const rows = data.partidas.filter((p) => !p.archived || (t.get(p.id)?.totalCents || 0) > 0);
+  const none = t.get('')?.totalCents || 0;
+  if (!rows.length) {
+    return (
+      <section className="card">
+        <h3 className="card-title">Partidas</h3>
+        <p className="muted">Divide la obra en partidas (Pladur, Pintura…) para saber cuánto te cuesta cada trabajo.</p>
+        <button className="btn btn-ghost" onClick={() => navigate(`/obra/${projectId}/partidas`, { replace: true })}><Icon name="plus" size={18} /> Añadir partidas</button>
+      </section>
+    );
+  }
+  const max = Math.max(1, ...rows.map((p) => t.get(p.id)?.totalCents || 0), none);
+  const line = (key: string, name: string, cents: number, extra?: string) => (
+    <li key={key}>
+      <button className="row-btn share-row" onClick={() => navigate(`/obra/${projectId}/partida/${key || 'sin'}`)}>
+        <div>
+          <span className="share-name">{name}{extra && <small className="muted"> · {extra}</small>}</span>
+          <span className="share-bar"><span style={{ width: `${(cents / max) * 100}%` }} /></span>
+        </div>
+        <strong className="num">{eurosRound(cents)}</strong>
+      </button>
+    </li>
+  );
+  return (
+    <section className="card card-flush">
+      <h3 className="card-title">Partidas</h3>
+      <ul className="rows rows-flat">
+        {rows.map((p) => {
+          const c = t.get(p.id)?.totalCents || 0;
+          const s = budgetStatus(p.budget_cents, c);
+          return line(p.id, p.name, c, s.consumed != null ? `${pct(s.consumed)} de ${eurosRound(s.budgetCents!)}` : undefined);
+        })}
+        {none > 0 && line('', NO_PARTIDA, none)}
+        <li className="rows-total"><span>Total obra</span><strong className="num">{eurosRound(total.totalCents)}</strong></li>
+      </ul>
+    </section>
+  );
+}
+
+function PartidasTab({ data, projectId }: { data: Data; projectId: string }) {
+  const [form, setForm] = useState<Partida | 'new' | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [ordering, setOrdering] = useState(false);
+  const [tpl, setTpl] = useState(false);
+  const t = byPartida(data);
+  const active = data.partidas.filter((p) => !p.archived);
+  const archived = data.partidas.filter((p) => p.archived);
+  const none = t.get('') || EMPTY_TOTALS;
+  const total = sumTotals(data.labor, data.materials, data.expenses);
+
+  const row = (p: Partida, i: number) => {
+    const c = t.get(p.id) || EMPTY_TOTALS;
+    const s = budgetStatus(p.budget_cents, c.totalCents);
+    const u = unitCost(c.totalCents, p.quantity);
+    return (
+      <li key={p.id} className={ordering ? 'ordering' : ''}>
+        <button className="row-btn partida-row" onClick={() => !ordering && navigate(`/obra/${projectId}/partida/${p.id}`)}>
+          <div>
+            <span className="partida-row-head"><strong>{p.name}</strong><span className={`pill pill-${p.status}`}>{STATUS_LABEL[p.status]}</span></span>
+            <span className="muted">
+              {fmtHours(c.hours)}
+              {p.quantity ? <> · <span className="num">{number(p.quantity)} {p.unit || ''}</span></> : null}
+              {u != null ? <> · <span className="num">{euros(u)}/{p.unit || 'ud'}</span></> : null}
+            </span>
+            {s.consumed != null && (
+              <span className="partida-meter"><BudgetMeter s={s} compact /><small className={`num health-text-${s.health}`}>{pct(s.consumed)} de {eurosRound(s.budgetCents!)}</small></span>
+            )}
+          </div>
+          <strong className="num">{eurosRound(c.totalCents)}</strong>
+          {!ordering && <Icon name="chevron" size={18} />}
+        </button>
+        {ordering && (
+          <span className="order-btns">
+            <button className="icon-btn small" disabled={i === 0} onClick={() => movePartida(projectId, p.id, -1)} aria-label={`Subir ${p.name}`}><Icon name="up" size={18} /></button>
+            <button className="icon-btn small" disabled={i === active.length - 1} onClick={() => movePartida(projectId, p.id, 1)} aria-label={`Bajar ${p.name}`}><Icon name="down" size={18} /></button>
+          </span>
+        )}
+      </li>
+    );
+  };
+
+  return (
+    <div className="stack-v">
+      <div className="actions">
+        <button className="btn btn-primary" onClick={() => setForm('new')}><Icon name="plus" size={18} /> Nueva partida</button>
+        <button className="btn btn-ghost" onClick={() => setAdding(true)}><Icon name="copy" size={18} /> Añadir varias</button>
+        {active.length > 1 && (
+          <button className={`btn btn-ghost${ordering ? ' on' : ''}`} onClick={() => setOrdering(!ordering)}>{ordering ? 'Hecho' : 'Ordenar'}</button>
+        )}
+      </div>
+
+      {data.partidas.length === 0 ? (
+        <Empty icon="list" title="Esta obra aún no tiene partidas">
+          <p>Divide la obra en trabajos (Demolición, Pladur, Pintura…). En cada parte eliges a qué partida va cada hora, material o gasto, y aquí verás lo que cuesta cada una.</p>
+          <button className="btn btn-primary" onClick={() => setAdding(true)}>Elegir partidas</button>
+        </Empty>
+      ) : (
+        <ul className="rows">
+          {active.map(row)}
+          {none.totalCents > 0 && (
+            <li>
+              <button className="row-btn partida-row" onClick={() => navigate(`/obra/${projectId}/partida/sin`)}>
+                <div><strong className="muted">{NO_PARTIDA}</strong><span className="muted">Lo apuntado sin elegir partida{none.hours ? ` · ${fmtHours(none.hours)}` : ''}</span></div>
+                <strong className="num">{eurosRound(none.totalCents)}</strong>
+                <Icon name="chevron" size={18} />
+              </button>
+            </li>
+          )}
+          <li className="rows-total"><span>Total obra</span><strong className="num">{eurosRound(total.totalCents)}</strong></li>
+        </ul>
+      )}
+
+      {archived.length > 0 && (
+        <details className="archived">
+          <summary>Archivadas ({archived.length})</summary>
+          <ul className="rows">{archived.map(row)}</ul>
+        </details>
+      )}
+
+      {data.partidas.length > 0 && (
+        <button className="link center" onClick={() => setTpl(true)}><Icon name="copy" size={16} /> Guardar estas partidas como plantilla</button>
+      )}
+
+      <PartidaForm open={!!form} onClose={() => setForm(null)} projectId={projectId} partida={form === 'new' ? null : form} />
+      <AddPartidasSheet open={adding} onClose={() => setAdding(false)} projectId={projectId} existing={data.partidas.map((p) => p.name)} />
+      <TemplateSheet open={tpl} onClose={() => setTpl(false)} items={active.map((p) => ({ name: p.name, unit: p.unit }))} />
+    </div>
+  );
+}
+
+function AddPartidasSheet({ open, onClose, projectId, existing }: { open: boolean; onClose: () => void; projectId: string; existing: string[] }) {
+  const [sel, setSel] = useState<PartidaSeed[]>([]);
+  useEffect(() => { if (open) setSel([]); }, [open]);
+  const save = async () => {
+    const n = await addPartidas(projectId, sel);
+    toast(n === 1 ? 'Partida añadida' : `${n} partidas añadidas`);
+    onClose();
+  };
+  return (
+    <Sheet open={open} onClose={onClose} title="Añadir partidas">
+      <div className="form">
+        <PartidaPicker value={sel} onChange={setSel} exceptProjectId={projectId} existing={existing} />
+        <button className="btn btn-primary btn-block" disabled={!sel.length} onClick={save}>
+          {sel.length ? `Añadir ${sel.length} ${sel.length === 1 ? 'partida' : 'partidas'}` : 'Elige alguna partida'}
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
+function TemplateSheet({ open, onClose, items }: { open: boolean; onClose: () => void; items: PartidaSeed[] }) {
+  const [name, setName] = useState('');
+  useEffect(() => { if (open) setName(''); }, [open]);
+  return (
+    <Sheet open={open} onClose={onClose} title="Guardar como plantilla">
+      <form className="form" onSubmit={async (e) => {
+        e.preventDefault();
+        if (!name.trim()) return;
+        await saveTemplate(name, items);
+        toast('Plantilla guardada');
+        onClose();
+      }}>
+        <p className="muted">{items.map((i) => i.name).join(', ')}</p>
+        <label className="field"><span>Nombre de la plantilla</span>
+          <input id="tpl-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Reforma de baño" autoFocus />
+        </label>
+        <button className="btn btn-primary btn-block" type="submit" disabled={!name.trim()}>Guardar plantilla</button>
+      </form>
     </Sheet>
   );
 }

@@ -451,3 +451,46 @@ select.cat { width: auto; flex: 1 1 160px; }
 .login-brand h1 { font-size: 34px; }
 .login-logo { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); margin-bottom: 8px; }
 .center-link { align-self: center; }
+
+/* Partidas */
+.picker { display: flex; flex-direction: column; gap: 12px; }
+.picker-group { display: flex; flex-direction: column; gap: 6px; }
+.picker .chip.on small { color: inherit; opacity: 0.75; }
+.chip-template { border-style: dashed; color: var(--accent); }
+.qty-unit { display: flex; gap: 6px; }
+.qty-unit input { flex: 1; min-width: 0; }
+.qty-unit select { width: 72px; flex: none; }
+.partida-pick { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.partida-pick .block-head h2 { font-size: 18px; }
+.partida-pick .chips { flex-wrap: wrap; overflow: visible; margin-inline: 0; padding-inline: 0; }
+.partida-pick .chip { min-height: 44px; font-size: 16px; }
+.partida-pick .chip.on small { color: inherit; opacity: 0.8; }
+.partida-tag { position: relative; align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 3px 10px; border-radius: 16px; background: var(--accent-soft); color: var(--accent); font-size: 14px; font-weight: 600; margin-top: -4px; }
+.partida-tag.none { background: var(--surface); color: var(--muted); border: 1px dashed var(--line); }
+.partida-tag select { position: absolute; inset: 0; opacity: 0; width: 100%; font-size: 16px; cursor: pointer; }
+.partida-chip { display: inline-block; margin-left: 8px; padding: 0 8px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600; vertical-align: middle; }
+.partida-row > div { gap: 3px; }
+.partida-row-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.partida-row-head .pill { font-size: 12px; padding: 0 8px; }
+.partida-meter { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.partida-meter .meter { flex: 1; }
+.partida-meter small { font-size: 13px; white-space: nowrap; font-weight: 600; }
+.rows > li.ordering { display: flex; align-items: center; padding-right: 8px; }
+.order-btns { display: flex; gap: 2px; }
+.order-btns button:disabled { opacity: 0.3; }
+.btn.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.card-flush { padding-bottom: 0; overflow: hidden; }
+.card-flush .card-title { margin-bottom: 4px; }
+.rows-flat { border: 0; border-radius: 0; margin-inline: -16px; }
+.share-row { min-height: 52px; padding-block: 10px; }
+.share-row > div { gap: 6px; }
+.share-name { font-weight: 600; }
+.share-name small { font-weight: 500; }
+.share-bar { display: block; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.share-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.section-title { font-size: 18px; font-weight: 700; margin-top: 8px; display: flex; align-items: baseline; gap: 8px; }
+.archived summary { cursor: pointer; color: var(--muted); font-weight: 600; padding: 8px 0; }
+.report-partidas { font-size: 13px; }
+.table tr.clickable { cursor: pointer; }
+.table tr.clickable:hover td { background: var(--surface-2); }
+.table small.block { display: block; background: none; border: 0; padding: 0; border-radius: 0; }

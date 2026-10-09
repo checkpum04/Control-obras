@@ -6,11 +6,11 @@ import { db, markSyncTransaction, setLocalChangeListener, SYNC_TABLES, type Sync
 import type { Attachment } from './types';
 
 export const REMOTE: Record<SyncTable, string> = {
-  clients: 'clients', projects: 'projects', workers: 'workers', materials: 'materials', concepts: 'expense_concepts',
+  clients: 'clients', projects: 'projects', partidas: 'partidas', partidaTemplates: 'partida_templates', workers: 'workers', materials: 'materials', concepts: 'expense_concepts',
   reports: 'daily_reports', labor: 'labor_entries', materialEntries: 'material_entries', expenses: 'expenses', attachments: 'attachments',
 };
 const NUMERIC: Partial<Record<SyncTable, string[]>> = {
-  projects: ['budget_cents'], workers: ['default_rate_cents', 'use_count'], materials: ['last_price_cents', 'use_count'],
+  projects: ['budget_cents'], partidas: ['budget_cents', 'quantity', 'sort_order'], partidaTemplates: ['use_count'], workers: ['default_rate_cents', 'use_count'], materials: ['last_price_cents', 'use_count'],
   concepts: ['last_amount_cents', 'use_count'], labor: ['hours', 'rate_cents', 'cost_cents'],
   materialEntries: ['quantity', 'unit_price_cents', 'cost_cents'], expenses: ['amount_cents'], attachments: ['size'],
 };
