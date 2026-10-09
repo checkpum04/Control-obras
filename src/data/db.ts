@@ -1,16 +1,21 @@
 import Dexie, { type Table, type Transaction } from 'dexie';
 import type {
-  Attachment, Client, DailyReport, Expense, ExpenseConcept, LaborEntry, Material, MaterialEntry, Project, Worker,
+  Attachment, Client, DailyReport, Expense, ExpenseConcept, LaborEntry, Material, MaterialEntry, Partida, PartidaTemplate,
+  Project, Worker,
 } from './types';
 
 /** Tablas que se sincronizan con la nube, en orden de dependencias (padres antes que hijos). */
-export const SYNC_TABLES = ['clients', 'projects', 'workers', 'materials', 'concepts', 'reports', 'labor', 'materialEntries', 'expenses', 'attachments'] as const;
+export const SYNC_TABLES = [
+  'clients', 'projects', 'partidas', 'partidaTemplates', 'workers', 'materials', 'concepts', 'reports', 'labor', 'materialEntries', 'expenses', 'attachments',
+] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
 /** Base de datos local (IndexedDB). Es la fuente de verdad en el móvil; sync.ts la copia a Supabase. */
 export class ObraDB extends Dexie {
   clients!: Table<Client, string>;
   projects!: Table<Project, string>;
+  partidas!: Table<Partida, string>;
+  partidaTemplates!: Table<PartidaTemplate, string>;
   workers!: Table<Worker, string>;
   materials!: Table<Material, string>;
   concepts!: Table<ExpenseConcept, string>;
@@ -35,6 +40,15 @@ export class ObraDB extends Dexie {
       expenses: 'id, project_id, report_id, date',
       attachments: 'id, project_id, expense_id',
       meta: 'key',
+    });
+    // v2: partidas. Solo añade tablas e índices: los datos que ya había se conservan tal cual.
+    this.version(2).stores({
+      partidas: 'id, project_id',
+      partidaTemplates: 'id, name',
+      labor: 'id, report_id, project_id, worker_id, partida_id',
+      materialEntries: 'id, report_id, project_id, material_id, partida_id',
+      expenses: 'id, project_id, report_id, date, partida_id',
+      attachments: 'id, project_id, expense_id, partida_id',
     });
     for (const t of SYNC_TABLES) trackChanges(this.table(t));
   }

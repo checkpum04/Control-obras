@@ -190,3 +190,5 @@ insert into storage.buckets (id, name, public) values ('adjuntos', 'adjuntos', f
 create policy "adjuntos propios" on storage.objects for all to authenticated
   using (bucket_id = 'adjuntos' and (storage.foldername(name))[1] = auth.uid()::text)
   with check (bucket_id = 'adjuntos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- Partidas: en una instalación nueva, ejecuta también docs/migrations/001-partidas.sql

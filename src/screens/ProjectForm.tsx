@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { deleteProject, getProject, listClients, saveProject } from '../data/repo';
+import { addPartidas, deleteProject, getProject, listClients, saveProject, type PartidaSeed } from '../data/repo';
+import { PartidaPicker } from '../components/PartidaPicker';
 import { db } from '../data/db';
 import { centsToInput, parseMoney, todayISO } from '../lib/format';
 import { navigate } from '../lib/router';
@@ -14,6 +15,7 @@ export default function ProjectForm({ id }: { id?: string }) {
     status: 'en_curso' as ProjectStatus, budget: '', notes: '',
   });
   const [error, setError] = useState('');
+  const [partidas, setPartidas] = useState<PartidaSeed[]>([]);
 
   useEffect(() => {
     if (!id) return;
@@ -39,6 +41,7 @@ export default function ProjectForm({ id }: { id?: string }) {
       id, name: f.name, client_name: f.client_name, address: f.address, start_date: f.start_date || null,
       end_date: f.end_date || null, status: f.status, budget_cents: budget, notes: f.notes,
     });
+    if (!id && partidas.length) await addPartidas(pid, partidas);
     toast(id ? 'Obra guardada' : 'Obra creada');
     navigate(`/obra/${pid}`, { replace: true });
   };
@@ -91,6 +94,12 @@ export default function ProjectForm({ id }: { id?: string }) {
           <span>Notas</span>
           <textarea id="obra-notes" rows={3} value={f.notes} onChange={set('notes')} placeholder="Llaves, horarios, contacto…" />
         </label>
+        {!id && (
+          <fieldset className="field">
+            <legend>Partidas <small className="muted">(opcional, las puedes cambiar luego)</small></legend>
+            <PartidaPicker value={partidas} onChange={setPartidas} />
+          </fieldset>
+        )}
         {error && <p className="error" role="alert">{error}</p>}
         <button className="btn btn-primary btn-block" type="submit">{id ? 'Guardar cambios' : 'Crear obra'}</button>
         {id && (

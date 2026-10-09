@@ -2,10 +2,10 @@ import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../data/db';
 import { getProject, projectData } from '../data/repo';
-import { budgetStatus, round2, sumTotals } from '../lib/calc';
+import { budgetStatus, round2, sumTotals, totalsByPartida } from '../lib/calc';
 import { addDays, euros, fmtDate, hours as fmtHours, number, pct, todayISO } from '../lib/format';
 import { Icon, TopBar, toast } from '../components/ui';
-import { STATUS_LABEL } from '../data/types';
+import { NO_PARTIDA, STATUS_LABEL } from '../data/types';
 
 const inFrame = (() => { try { return window.self !== window.top; } catch { return true; } })();
 
@@ -50,8 +50,11 @@ export default function ReportPage({ id }: { id: string }) {
       const L = labor.filter((l) => l.report_id === rep.id), M = materials.filter((m) => m.report_id === rep.id), E = expenses.filter((e) => e.report_id === rep.id);
       return { date: rep.date, workers: L.length, ...sumTotals(L, M, E) };
     });
+    const byP = totalsByPartida(labor, materials, expenses, new Set(data.partidas.map((p) => p.id)));
+    const partidas = [...data.partidas.map((p) => ({ id: p.id, name: p.name })), { id: '', name: NO_PARTIDA }]
+      .filter((p) => byP.has(p.id)).map((p) => ({ ...p, ...byP.get(p.id)! }));
     return {
-      reports, period: sumTotals(labor, materials, expenses), all: sumTotals(data.labor, data.materials, data.expenses),
+      partidas: data.partidas.length ? partidas : [], reports, period: sumTotals(labor, materials, expenses), all: sumTotals(data.labor, data.materials, data.expenses),
       workers: [...workers.values()].sort((a, b) => b.cost - a.cost), mats: [...mats.values()].sort((a, b) => b.cost - a.cost), expenses, daily,
     };
   }, [data, f, t]);
@@ -80,6 +83,11 @@ export default function ReportPage({ id }: { id: string }) {
       ['Restante', s.remainingCents != null ? money(s.remainingCents) : ''],
       ['Presupuesto consumido', s.consumed != null ? pct(s.consumed) : ''],
       [],
+      ...(r.partidas.length ? [
+        ['PARTIDAS', 'Horas', 'Mano de obra', 'Materiales', 'Otros', 'Total'],
+        ...r.partidas.map((p) => [p.name, number(p.hours), money(p.laborCents), money(p.materialsCents), money(p.expensesCents), money(p.totalCents)]),
+        [],
+      ] : []),
       ['TRABAJADORES', 'Horas', 'Coste'],
       ...r.workers.map((w) => [w.name, number(w.hours), money(w.cost)]),
       [],
@@ -170,6 +178,16 @@ export default function ReportPage({ id }: { id: string }) {
             <tr><td>Presupuesto consumido</td><td className="r num">{pct(s.consumed)}</td></tr>
           </tbody>
         </table>
+
+        {r.partidas.length > 0 && (
+          <>
+            <h3>Partidas</h3>
+            <div className="table-wrap"><table className="table">
+              <thead><tr><th>Partida</th><th className="r">Horas</th><th className="r">Mano de obra</th><th className="r">Materiales</th><th className="r">Otros</th><th className="r">Total</th></tr></thead>
+              <tbody>{r.partidas.map((p) => <tr key={p.id || 'sin'}><td>{p.name}</td><td className="r num">{number(p.hours)}</td><td className="r num">{euros(p.laborCents)}</td><td className="r num">{euros(p.materialsCents)}</td><td className="r num">{euros(p.expensesCents)}</td><td className="r num">{euros(p.totalCents)}</td></tr>)}</tbody>
+            </table></div>
+          </>
+        )}
 
         <h3>Trabajadores</h3>
         {r.workers.length ? (

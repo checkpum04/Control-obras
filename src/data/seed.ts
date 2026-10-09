@@ -2,7 +2,7 @@ import { cloudEnabled } from './cloud';
 // Obras de ejemplo para probar la app. Todo lo creado aquí queda marcado con example=true
 // y se puede borrar desde Inicio o Ajustes sin tocar los datos reales.
 import { db } from './db';
-import { saveConcept, saveMaterial, saveProject, saveReport, saveWorker, type ExpenseLine, type MaterialLine } from './repo';
+import { addPartidas, listPartidas, saveConcept, saveMaterial, savePartida, saveProject, saveReport, saveWorker, type ExpenseLine, type MaterialLine } from './repo';
 import { addDays, todayISO } from '../lib/format';
 
 const W = {
@@ -48,9 +48,12 @@ export async function seedExamples() {
     start_date: addDays(todayISO(), -33), status: 'en_curso', budget_cents: 4_500_000,
     notes: 'Llaves en el bar de abajo. Vecina del 2.º A pide no empezar antes de las 8:30.',
   });
+  await addPartidas(casa, [{ name: 'Demolición' }, { name: 'Albañilería' }, { name: 'Pladur', unit: 'm²' }, { name: 'Electricidad' }, { name: 'Pintura', unit: 'm²' }]);
+  const [demo, alba, plad, elec, pint] = await listPartidas(casa);
   const casaDays = weekdays(-33, -1);
   for (const [i, d] of casaDays.entries()) {
     const phase = i / casaDays.length;
+    const part = phase < 0.1 ? demo : phase < 0.3 ? alba : phase < 0.6 ? plad : pint;
     const crew: (keyof typeof W)[] = phase > 0.55 && phase < 0.7 ? ['juan', 'pedro', 'miguel', 'luis'] : ['juan', 'pedro', 'miguel'];
     const L = labor(crew).map((l) => ({ ...l, hours: rnd() < 0.15 ? 6 : 8 }));
     const mats: MaterialLine[] =
@@ -62,8 +65,21 @@ export async function seedExamples() {
     if (i % 4 === 1) E.push(exp('Gasolina', 'Gasolina furgoneta', 55 + Math.round(rnd() * 15)));
     if (i === 3) E.push(exp('Alquiler de maquinaria', 'Alquiler andamio 2 semanas', 450, 'Andamios Henares'));
     if (i === Math.floor(casaDays.length * 0.6)) E.push(exp('Subcontratistas', 'Instalación eléctrica (mano de obra)', 2400, 'Factura 2026-118'));
-    await saveReport({ project_id: casa, date: d, labor: L, materials: mats.filter((m) => m.quantity > 0), expenses: E,
+    await saveReport({
+      project_id: casa, date: d,
+      labor: L.map((l) => ({ ...l, partida_id: l.worker_name.includes('electricista') ? elec.id : part.id })),
+      materials: mats.filter((m) => m.quantity > 0).map((m) => ({ ...m, partida_id: part.id })),
+      expenses: E.map((e) => ({ ...e, partida_id: e.category === 'Subcontratistas' ? elec.id : e.category === 'Contenedores' ? demo.id : null })),
       notes: i === 0 ? 'Demolición de tabiques de cocina y baño.' : '' });
+  }
+  const dates = (from: number, to: number) => casaDays.filter((_, i) => i / casaDays.length >= from && i / casaDays.length < to);
+  for (const [p, status, from, to, extra] of [
+    [demo, 'terminada', 0, 0.1, { budget_cents: 220_000 }], [alba, 'terminada', 0.1, 0.3, { budget_cents: 320_000 }],
+    [plad, 'terminada', 0.3, 0.6, { budget_cents: 600_000, quantity: 210 }], [elec, 'en_curso', 0.55, 0.7, { budget_cents: 350_000 }],
+    [pint, 'en_curso', 0.6, 1, { budget_cents: 600_000 }],
+  ] as const) {
+    const ds = dates(from, to);
+    await savePartida({ ...p, status, start_date: ds[0] || null, end_date: status === 'terminada' ? ds.at(-1) || null : null, ...extra });
   }
 
   // 2 · Baño y cocina, cerca del límite
@@ -89,12 +105,14 @@ export async function seedExamples() {
     name: 'Local comercial Ruiz', client_name: 'Ruiz e Hijos SL', address: 'C/ Libreros 3, Alcalá de Henares',
     start_date: addDays(todayISO(), -72), end_date: addDays(todayISO(), -41), status: 'terminada', budget_cents: 1_800_000,
   });
+  const rPlad = await savePartida({ project_id: ruiz, name: 'Pladur', status: 'terminada', budget_cents: 700_000, quantity: 140, unit: 'm²' });
   for (const [i, d] of weekdays(-72, -41).entries()) {
-    const mats = [mat(pick(['pladur', 'yeso', 'cemento']), 6 + Math.round(rnd() * 10)), mat(pick(['cable', 'pintura', 'montante']), 1 + Math.round(rnd() * 3))];
+    const mats = [mat(pick(['pladur', 'yeso', 'cemento']), 6 + Math.round(rnd() * 10)), mat(pick(['cable', 'pintura', 'montante']), 1 + Math.round(rnd() * 3))]
+      .map((m) => ({ ...m, partida_id: i % 2 ? rPlad : null }));
     const E: ExpenseLine[] = [];
     if (i % 5 === 0) E.push(exp('Contenedores', 'Contenedor 6 m³', 180));
     if (i % 3 === 0) E.push(exp('Gasolina', 'Gasolina furgoneta', 60));
-    await saveReport({ project_id: ruiz, date: d, labor: labor(['juan', 'pedro', 'luis', 'miguel']), materials: mats, expenses: E });
+    await saveReport({ project_id: ruiz, date: d, labor: labor(['juan', 'pedro', 'luis', 'miguel']).map((l) => ({ ...l, partida_id: i % 2 ? rPlad : null })), materials: mats, expenses: E });
   }
 
   // 4 · Pendiente de empezar

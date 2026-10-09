@@ -6,6 +6,8 @@ import Home from './screens/Home';
 import PickProject from './screens/PickProject';
 import ProjectForm from './screens/ProjectForm';
 import ProjectDetail from './screens/ProjectDetail';
+import PartidaDetail from './screens/PartidaDetail';
+import PartidaAnalysis, { PartidaCompare } from './screens/PartidaAnalysis';
 import ReportEditor from './screens/ReportEditor';
 import ReportView from './screens/ReportView';
 import Search from './screens/Search';
@@ -23,11 +25,14 @@ function Screen({ path }: { path: string }) {
   if (path === '/elegir-obra') return <PickProject />;
   if (path === '/obra/nueva') return <ProjectForm />;
   if ((m = match('/obra/:id/editar', path))) return <ProjectForm key={m.id} id={m.id} />;
+  if ((m = match('/obra/:id/partida/:pid', path))) return <PartidaDetail key={path} projectId={m.id} partidaId={m.pid} />;
   if ((m = match('/obra/:id', path))) return <ProjectDetail key={m.id} id={m.id} />;
   if ((m = match('/obra/:id/:tab', path))) return <ProjectDetail key={m.id} id={m.id} tab={m.tab} />;
-  if ((m = match('/parte/nuevo/:pid', path))) return <ReportEditor key={path} projectId={m.pid} initialDate={query(path).get('fecha') || undefined} />;
+  if ((m = match('/parte/nuevo/:pid', path))) return <ReportEditor key={path} projectId={m.pid} initialDate={query(path).get('fecha') || undefined} initialPartida={query(path).get('partida') || undefined} />;
   if ((m = match('/parte/:id/editar', path))) return <ReportEditor key={path} reportId={m.id} />;
   if ((m = match('/parte/:id', path))) return <ReportView id={m.id} />;
+  if (path === '/partidas') return <PartidaAnalysis />;
+  if ((m = match('/partidas/:k', path))) return <PartidaCompare k={m.k} />;
   if (path === '/buscar') return <Search />;
   if (path === '/catalogo') return <Catalog />;
   if ((m = match('/catalogo/:tab', path))) return <Catalog tab={m.tab} />;
@@ -37,7 +42,7 @@ function Screen({ path }: { path: string }) {
 }
 
 const NAV = [
-  { path: '/', label: 'Obras', icon: 'home', is: (p: string) => p === '/' || p.startsWith('/obra') || p.startsWith('/informe') },
+  { path: '/', label: 'Obras', icon: 'home', is: (p: string) => p === '/' || p.startsWith('/obra') || p.startsWith('/informe') || p.startsWith('/partidas') },
   { path: '/buscar', label: 'Buscar', icon: 'search', is: (p: string) => p.startsWith('/buscar') },
   { path: '/catalogo', label: 'Catálogo', icon: 'list', is: (p: string) => p.startsWith('/catalogo') },
   { path: '/ajustes', label: 'Ajustes', icon: 'cog', is: (p: string) => p.startsWith('/ajustes') },

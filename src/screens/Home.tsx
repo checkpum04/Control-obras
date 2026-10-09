@@ -47,7 +47,10 @@ export default function Home() {
           <h1 className="home-title">Mis obras</h1>
           <SyncBadge />
         </div>
-        <button className="icon-btn" onClick={() => navigate('/buscar')} aria-label="Buscar"><Icon name="search" /></button>
+        <div className="topbar-actions">
+          <button className="icon-btn" onClick={() => navigate('/partidas')} aria-label="Análisis por partidas"><Icon name="chart" /></button>
+          <button className="icon-btn" onClick={() => navigate('/buscar')} aria-label="Buscar"><Icon name="search" /></button>
+        </div>
       </header>
 
       <button className="cta" onClick={() => startTodayReport()}>

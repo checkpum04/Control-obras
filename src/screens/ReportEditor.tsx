@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
-  findReport, getProject, getReport, listConcepts, listMaterials, listWorkers, previousReport, saveReport, deleteReport,
+  findReport, getProject, getReport, listConcepts, listMaterials, listPartidas, listWorkers, previousReport, saveReport, deleteReport,
 } from '../data/repo';
 import { lineCost } from '../lib/calc';
 import { centsToInput, euros, fmtDate, hours as fmtHours, norm, numToInput, parseDecimal, parseMoney, todayISO, weekday } from '../lib/format';
@@ -9,11 +9,11 @@ import { navigate, back } from '../lib/router';
 import { frequent } from '../lib/suggest';
 import { AddWithSuggestions, Chips } from '../components/Autocomplete';
 import { ConfirmButton, Icon, Stepper, TopBar, toast } from '../components/ui';
-import { EXPENSE_CATEGORIES, UNITS, type ExpenseConcept, type Material, type Worker } from '../data/types';
+import { EXPENSE_CATEGORIES, NO_PARTIDA, UNITS, type ExpenseConcept, type Material, type Partida, type Worker } from '../data/types';
 
-interface LRow { key: string; id?: string; worker_id?: string | null; worker_name: string; hours: string; rate: string; habitual?: number | null; save_rate?: boolean }
-interface MRow { key: string; id?: string; material_id?: string | null; material_name: string; unit: string; quantity: string; price: string }
-interface ERow { key: string; id?: string; category: string; concept: string; amount: string; note: string; showNote?: boolean; files: File[] }
+interface LRow { key: string; id?: string; partida_id?: string | null; worker_id?: string | null; worker_name: string; hours: string; rate: string; habitual?: number | null; save_rate?: boolean }
+interface MRow { key: string; id?: string; partida_id?: string | null; material_id?: string | null; material_name: string; unit: string; quantity: string; price: string }
+interface ERow { key: string; id?: string; partida_id?: string | null; category: string; concept: string; amount: string; note: string; showNote?: boolean; files: File[] }
 
 interface Draft { labor: LRow[]; materials: MRow[]; expenses: ERow[]; notes: string; savedAt: string }
 const strip = <T extends { key: string }>({ key: _k, ...r }: T) => r;
@@ -22,7 +22,11 @@ let k = 0;
 const key = () => `r${++k}`;
 const DEFAULT_HOURS = '8';
 
-export default function ReportEditor({ projectId: initialProject, reportId: editId, initialDate }: { projectId?: string; reportId?: string; initialDate?: string }) {
+const partidaKey = (pid: string) => `obra.partida:${pid}`;
+
+export default function ReportEditor({ projectId: initialProject, reportId: editId, initialDate, initialPartida }: {
+  projectId?: string; reportId?: string; initialDate?: string; initialPartida?: string;
+}) {
   const [projectId, setProjectId] = useState(initialProject || '');
   const [date, setDate] = useState(initialDate || todayISO());
   const [reportId, setReportId] = useState<string | undefined>(editId);
@@ -42,6 +46,28 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
   const mats = useLiveQuery(listMaterials) || [];
   const concepts = useLiveQuery(listConcepts) || [];
   const prev = useLiveQuery(() => (projectId ? previousReport(projectId, date) : undefined), [projectId, date]);
+  const partidas = useLiveQuery(() => (projectId ? listPartidas(projectId) : []), [projectId]);
+
+  // ───── Partida en la que se está apuntando: lo que se añade va a ella.
+  const [current, setCurrent] = useState<string | undefined>(undefined);
+  const openPartidas = useMemo(() => (partidas || []).filter((p) => !p.archived), [partidas]);
+  const hasPartidas = (partidas?.length || 0) > 0;
+  useEffect(() => {
+    if (!partidas || current !== undefined) return;
+    const ok = (id?: string | null) => !!id && openPartidas.some((p) => p.id === id);
+    let saved: string | null = null;
+    try { saved = localStorage.getItem(partidaKey(projectId)); } catch { /* nada */ }
+    const enCurso = openPartidas.filter((p) => p.status === 'en_curso');
+    setCurrent(ok(initialPartida) ? initialPartida! : ok(saved) ? saved! : enCurso.length === 1 ? enCurso[0].id : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partidas]);
+  const pickPartida = (id: string) => {
+    setCurrent(id);
+    try { localStorage.setItem(partidaKey(projectId), id); } catch { /* nada */ }
+  };
+  const cur = current || null;
+  /** Al copiar líneas de otro día se respeta su partida si sigue abierta; si no, va a la actual. */
+  const keepPartida = (id?: string | null) => (id && openPartidas.some((p) => p.id === id) ? id : cur);
 
   const fill = (r: NonNullable<Awaited<ReturnType<typeof getReport>>>) => {
     setReportId(r.report.id);
@@ -49,15 +75,15 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
     setDate(r.report.date);
     setNotes(r.report.notes || '');
     setLabor(r.labor.map((l) => ({
-      key: key(), id: l.id, worker_id: l.worker_id, worker_name: l.worker_name, hours: numToInput(l.hours), rate: centsToInput(l.rate_cents),
+      key: key(), id: l.id, partida_id: l.partida_id, worker_id: l.worker_id, worker_name: l.worker_name, hours: numToInput(l.hours), rate: centsToInput(l.rate_cents),
       habitual: l.worker_id ? undefined : null,
     })));
     setMaterials(r.materials.map((m) => ({
-      key: key(), id: m.id, material_id: m.material_id, material_name: m.material_name, unit: m.unit,
+      key: key(), id: m.id, partida_id: m.partida_id, material_id: m.material_id, material_name: m.material_name, unit: m.unit,
       quantity: numToInput(m.quantity), price: centsToInput(m.unit_price_cents),
     })));
     setExpenses(r.expenses.map((e) => ({
-      key: key(), id: e.id, category: e.category, concept: e.concept, amount: centsToInput(e.amount_cents), note: e.note || '', showNote: !!e.note, files: [],
+      key: key(), id: e.id, partida_id: e.partida_id, category: e.category, concept: e.concept, amount: centsToInput(e.amount_cents), note: e.note || '', showNote: !!e.note, files: [],
     })));
   };
 
@@ -140,35 +166,44 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
 
   // ───── Mano de obra
   const workerById = useMemo(() => new Map(workers.map((w) => [w.id, w])), [workers]);
-  const inLabor = new Set(labor.map((l) => l.worker_id).filter(Boolean) as string[]);
-  const inLaborNames = new Set(labor.map((l) => norm(l.worker_name)));
+  // Un trabajador puede salir varias veces en el día, una por partida (4 h Albañilería + 4 h Pladur).
+  const here = (l: { partida_id?: string | null }) => (l.partida_id || null) === cur;
+  const inLabor = new Set(labor.filter(here).map((l) => l.worker_id).filter(Boolean) as string[]);
+  const lineKey = (name: string, partida?: string | null) => `${norm(name)}|${partida || ''}`;
+  const inLaborNames = new Set(labor.map((l) => lineKey(l.worker_name, l.partida_id)));
+  /** Horas que le quedan hasta 8 si ya trabajó en otra partida ese día. */
+  const hoursFor = (name: string) => {
+    const done = labor.filter((l) => norm(l.worker_name) === norm(name)).reduce((a, l) => a + (parseDecimal(l.hours) || 0), 0);
+    const left = Number(DEFAULT_HOURS) - done;
+    return done > 0 && left > 0 ? numToInput(left) : DEFAULT_HOURS;
+  };
 
   const addWorker = (w: Worker) => {
     if (inLabor.has(w.id)) return;
-    const row = { key: key(), worker_id: w.id, worker_name: w.name, hours: DEFAULT_HOURS, rate: centsToInput(w.default_rate_cents), habitual: w.default_rate_cents };
+    const row = { key: key(), partida_id: cur, worker_id: w.id, worker_name: w.name, hours: hoursFor(w.name), rate: centsToInput(w.default_rate_cents), habitual: w.default_rate_cents };
     if (!w.default_rate_cents) focusNext.current = `rate-${row.key}`;
     setLabor((l) => [...l, row]);
   };
   const addNewWorker = (name: string) => {
     const existing = workers.find((w) => norm(w.name) === norm(name));
     if (existing) return addWorker(existing);
-    const row = { key: key(), worker_id: null, worker_name: name, hours: DEFAULT_HOURS, rate: '', habitual: null, save_rate: true };
+    const row = { key: key(), partida_id: cur, worker_id: null, worker_name: name, hours: hoursFor(name), rate: '', habitual: null, save_rate: true };
     focusNext.current = `rate-${row.key}`;
     setLabor((l) => [...l, row]);
   };
   const updL = (k: string, patch: Partial<LRow>) => setLabor((l) => l.map((r) => (r.key === k ? { ...r, ...patch } : r)));
 
   // ───── Materiales
-  const inMats = new Set(materials.map((m) => m.material_id).filter(Boolean) as string[]);
+  const inMats = new Set(materials.filter(here).map((m) => m.material_id).filter(Boolean) as string[]);
   const addMaterial = (m: Material) => {
-    const row = { key: key(), material_id: m.id, material_name: m.name, unit: m.default_unit, quantity: '', price: centsToInput(m.last_price_cents) };
+    const row = { key: key(), partida_id: cur, material_id: m.id, material_name: m.name, unit: m.default_unit, quantity: '', price: centsToInput(m.last_price_cents) };
     focusNext.current = `qty-${row.key}`;
     setMaterials((l) => [...l, row]);
   };
   const addNewMaterial = (name: string) => {
     const existing = mats.find((m) => norm(m.name) === norm(name));
     if (existing) return addMaterial(existing);
-    const row = { key: key(), material_id: null, material_name: name, unit: 'ud', quantity: '', price: '' };
+    const row = { key: key(), partida_id: cur, material_id: null, material_name: name, unit: 'ud', quantity: '', price: '' };
     focusNext.current = `qty-${row.key}`;
     setMaterials((l) => [...l, row]);
   };
@@ -176,7 +211,7 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
 
   // ───── Otros gastos
   const addConcept = (c: ExpenseConcept) => {
-    const row = { key: key(), category: c.category, concept: c.name, amount: centsToInput(c.last_amount_cents), note: '', files: [] };
+    const row = { key: key(), partida_id: cur, category: c.category, concept: c.name, amount: centsToInput(c.last_amount_cents), note: '', files: [] };
     focusNext.current = `amount-${row.key}`;
     setExpenses((l) => [...l, row]);
   };
@@ -184,7 +219,7 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
     const existing = concepts.find((c) => norm(c.name) === norm(name));
     if (existing) return addConcept(existing);
     const cat = EXPENSE_CATEGORIES.find((c) => norm(c) === norm(name)) || 'Otros';
-    const row = { key: key(), category: cat, concept: name, amount: '', note: '', files: [] };
+    const row = { key: key(), partida_id: cur, category: cat, concept: name, amount: '', note: '', files: [] };
     focusNext.current = `amount-${row.key}`;
     setExpenses((l) => [...l, row]);
   };
@@ -193,8 +228,9 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
   // ───── Copiar día anterior (sin ids: crea líneas nuevas, nunca toca el parte antiguo)
   const copyPrevLabor = () => {
     if (!prev) return;
-    const add = prev.labor.filter((l) => !inLaborNames.has(norm(l.worker_name))).map((l) => ({
-      key: key(), worker_id: l.worker_id, worker_name: l.worker_name, hours: numToInput(l.hours), rate: centsToInput(l.rate_cents),
+    const add = prev.labor.map((l) => ({ ...l, partida_id: keepPartida(l.partida_id) }))
+      .filter((l) => !inLaborNames.has(lineKey(l.worker_name, l.partida_id))).map((l) => ({
+      key: key(), partida_id: l.partida_id, worker_id: l.worker_id, worker_name: l.worker_name, hours: numToInput(l.hours), rate: centsToInput(l.rate_cents),
       habitual: l.worker_id ? workerById.get(l.worker_id)?.default_rate_cents : null,
     }));
     setLabor((cur) => [...cur, ...add]);
@@ -203,14 +239,14 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
   const copyPrevMaterials = () => {
     if (!prev) return;
     setMaterials((cur) => [...cur, ...prev.materials.map((m) => ({
-      key: key(), material_id: m.material_id, material_name: m.material_name, unit: m.unit, quantity: numToInput(m.quantity),
+      key: key(), partida_id: keepPartida(m.partida_id), material_id: m.material_id, material_name: m.material_name, unit: m.unit, quantity: numToInput(m.quantity),
       price: centsToInput(m.material_id ? mats.find((x) => x.id === m.material_id)?.last_price_cents ?? m.unit_price_cents : m.unit_price_cents),
     }))]);
   };
   const copyPrevExpenses = () => {
     if (!prev) return;
     setExpenses((cur) => [...cur, ...prev.expenses.map((e) => ({
-      key: key(), category: e.category, concept: e.concept, amount: centsToInput(e.amount_cents), note: '', files: [],
+      key: key(), partida_id: keepPartida(e.partida_id), category: e.category, concept: e.concept, amount: centsToInput(e.amount_cents), note: '', files: [],
     }))]);
   };
 
@@ -223,6 +259,12 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
   const expTotal = expenses.reduce((a, r) => a + (parseMoney(r.amount) || 0), 0);
   const dayTotal = laborTotal + matTotal + expTotal;
   const empty = labor.length + materials.length + expenses.length === 0 && !notes.trim();
+  const split = new Map<string, number>();
+  for (const [rows, cost] of [[labor, lc], [materials, mc], [expenses, (r: ERow) => parseMoney(r.amount) || 0]] as const) {
+    for (const r of rows as { partida_id?: string | null }[]) split.set(r.partida_id || '', (split.get(r.partida_id || '') || 0) + (cost as (x: any) => number)(r));
+  }
+  const tag = (r: { key: string; partida_id?: string | null }, upd: (k: string, p: { partida_id: string | null }) => void) =>
+    hasPartidas ? <PartidaTag partidas={partidas!} value={r.partida_id} onChange={(v) => upd(r.key, { partida_id: v })} /> : null;
 
   const save = async () => {
     const errs: string[] = [];
@@ -247,14 +289,14 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
       await saveReport({
         id: reportId, project_id: projectId, date, notes,
         labor: labor.map((r) => ({
-          id: r.id, worker_id: r.worker_id, worker_name: r.worker_name, hours: parseDecimal(r.hours) || 0, rate_cents: parseMoney(r.rate) || 0,
+          id: r.id, partida_id: r.partida_id ?? null, worker_id: r.worker_id, worker_name: r.worker_name, hours: parseDecimal(r.hours) || 0, rate_cents: parseMoney(r.rate) || 0,
           save_rate: r.save_rate,
         })),
         materials: materials.map((r) => ({
-          id: r.id, material_id: r.material_id, material_name: r.material_name, unit: r.unit,
+          id: r.id, partida_id: r.partida_id ?? null, material_id: r.material_id, material_name: r.material_name, unit: r.unit,
           quantity: parseDecimal(r.quantity) || 0, unit_price_cents: parseMoney(r.price) || 0,
         })),
-        expenses: expenses.map((r) => ({ id: r.id, category: r.category, concept: r.concept, amount_cents: parseMoney(r.amount) || 0, note: r.note, files: r.files })),
+        expenses: expenses.map((r) => ({ id: r.id, partida_id: r.partida_id ?? null, category: r.category, concept: r.concept, amount_cents: parseMoney(r.amount) || 0, note: r.note, files: r.files })),
       });
       try { localStorage.removeItem(draftKey); } catch { /* nada */ }
       touched.current = false;
@@ -306,6 +348,24 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
         </div>
       )}
 
+      {hasPartidas && (
+        <section className="block partida-pick" aria-labelledby="h-partida">
+          <div className="block-head">
+            <h2 id="h-partida">¿En qué partida?</h2>
+            <button className="link small" onClick={() => navigate(`/obra/${projectId}/partidas`)}>Gestionar</button>
+          </div>
+          <div className="chips" role="radiogroup" aria-label="Partida">
+            {openPartidas.map((p) => (
+              <button type="button" key={p.id} role="radio" aria-checked={current === p.id} className={`chip${current === p.id ? ' on' : ''}`} onClick={() => pickPartida(p.id)}>
+                {p.name}{split.get(p.id) ? <small className="num">{euros(split.get(p.id)!)}</small> : null}
+              </button>
+            ))}
+            <button type="button" role="radio" aria-checked={current === ''} className={`chip chip-quiet${current === '' ? ' on' : ''}`} onClick={() => pickPartida('')}>{NO_PARTIDA}</button>
+          </div>
+          <p className="muted small">Lo que añadas ahora va a <strong>{openPartidas.find((p) => p.id === current)?.name || NO_PARTIDA}</strong>. Puedes cambiar la partida de cada línea.</p>
+        </section>
+      )}
+
       {prev && prev.labor.length > 0 && labor.length === 0 && (
         <button className="btn btn-copy btn-block" onClick={copyPrevLabor}>
           <Icon name="copy" size={20} />
@@ -330,6 +390,7 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
                 <span className="line-cost num">{euros(lc(r))}</span>
                 <button className="icon-btn small" onClick={() => setLabor((l) => l.filter((x) => x.key !== r.key))} aria-label={`Quitar ${r.worker_name}`}><Icon name="x" size={18} /></button>
               </div>
+              {tag(r, updL)}
               <div className="line-fields">
                 <div className="lf">
                   <Stepper id={`hours-${r.key}`} label={`horas de ${r.worker_name}`} value={r.hours} onChange={(v) => updL(r.key, { hours: v })} />
@@ -371,6 +432,7 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
               <span className="line-cost num">{euros(mc(r))}</span>
               <button className="icon-btn small" onClick={() => setMaterials((l) => l.filter((x) => x.key !== r.key))} aria-label={`Quitar ${r.material_name}`}><Icon name="x" size={18} /></button>
             </div>
+            {tag(r, updM)}
             <div className="line-fields">
               <div className="lf">
                 <input id={`qty-${r.key}`} className="qty" inputMode="decimal" value={r.quantity} placeholder="Cant." aria-label={`Cantidad de ${r.material_name}`}
@@ -410,6 +472,7 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
               <input className="line-name-input" value={r.concept} onChange={(e) => updE(r.key, { concept: e.target.value })} aria-label="Concepto" placeholder="Concepto" />
               <button className="icon-btn small" onClick={() => setExpenses((l) => l.filter((x) => x.key !== r.key))} aria-label={`Quitar ${r.concept}`}><Icon name="x" size={18} /></button>
             </div>
+            {tag(r, updE)}
             <div className="line-fields">
               <select className="cat" value={r.category} onChange={(e) => updE(r.key, { category: e.target.value })} aria-label="Tipo de gasto">
                 {EXPENSE_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
@@ -449,6 +512,18 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
         )}
       </section>
 
+      {hasPartidas && split.size > 1 && (
+        <section className="block">
+          <div className="block-head"><h2>Reparto por partida</h2></div>
+          <ul className="detail-list">
+            {[...openPartidas, ...(partidas || []).filter((p) => p.archived)].filter((p) => split.has(p.id)).map((p) => (
+              <li key={p.id}><span>{p.name}</span><strong className="num">{euros(split.get(p.id)!)}</strong></li>
+            ))}
+            {split.has('') && <li><span className="muted">{NO_PARTIDA}</span><strong className="num">{euros(split.get('')!)}</strong></li>}
+          </ul>
+        </section>
+      )}
+
       <section className="block">
         <label className="field">
           <span>Notas del día</span>
@@ -477,5 +552,20 @@ export default function ReportEditor({ projectId: initialProject, reportId: edit
         </button>
       </div>
     </div>
+  );
+}
+
+/** Etiqueta de la línea con su partida; se toca para cambiarla. */
+function PartidaTag({ partidas, value, onChange }: { partidas: Partida[]; value?: string | null; onChange: (v: string | null) => void }) {
+  const name = partidas.find((p) => p.id === value)?.name;
+  return (
+    <label className={`partida-tag${name ? '' : ' none'}`}>
+      <span>{name || NO_PARTIDA}</span>
+      <Icon name="down" size={14} stroke={2.5} />
+      <select value={value || ''} onChange={(e) => onChange(e.target.value || null)} aria-label="Partida de esta línea">
+        <option value="">{NO_PARTIDA}</option>
+        {partidas.filter((p) => !p.archived || p.id === value).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+    </label>
   );
 }

@@ -50,3 +50,33 @@ export function budgetStatus(budgetCents: number | null | undefined, spentCents:
 }
 
 export const round2 = (n: number) => Math.round(n * 100) / 100;
+
+type Keyed = { partida_id?: string | null };
+
+/**
+ * Totales por partida. Las líneas sin partida (o de una partida que ya no existe) van a la clave ''.
+ * Una misma línea nunca cuenta en dos partidas, así que la suma de todas es el total de la obra.
+ */
+export function totalsByPartida(
+  labor: ({ hours: number; cost_cents: number } & Keyed)[],
+  materials: ({ cost_cents: number } & Keyed)[],
+  expenses: ({ amount_cents: number } & Keyed)[],
+  known?: Set<string>,
+): Map<string, Totals> {
+  const key = (r: Keyed) => (r.partida_id && (!known || known.has(r.partida_id)) ? r.partida_id : '');
+  const L = new Map<string, typeof labor>(), M = new Map<string, typeof materials>(), E = new Map<string, typeof expenses>();
+  const push = <T,>(m: Map<string, T[]>, k: string, r: T) => { const a = m.get(k); if (a) a.push(r); else m.set(k, [r]); };
+  for (const r of labor) push(L, key(r), r);
+  for (const r of materials) push(M, key(r), r);
+  for (const r of expenses) push(E, key(r), r);
+  const out = new Map<string, Totals>();
+  for (const k of new Set([...L.keys(), ...M.keys(), ...E.keys()])) out.set(k, sumTotals(L.get(k) || [], M.get(k) || [], E.get(k) || []));
+  return out;
+}
+
+/** Coste real por unidad ejecutada (3.000 € / 100 m² = 30 €/m²). null si no hay cantidad. */
+export function unitCost(totalCents: number, quantity: number | null | undefined): number | null {
+  return quantity && quantity > 0 ? Math.round(totalCents / quantity) : null;
+}
+
+export const EMPTY_TOTALS: Totals = { hours: 0, laborCents: 0, materialsCents: 0, expensesCents: 0, totalCents: 0 };

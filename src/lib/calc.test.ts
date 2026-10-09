@@ -52,3 +52,22 @@ describe('formatos', () => {
     expect(norm('Pladur Hidrófugo').startsWith(norm('PLA'))).toBe(true);
   });
 });
+
+describe('partidas', () => {
+  it('reparte el coste por partida y lo que no tiene partida va aparte', async () => {
+    const { totalsByPartida, unitCost } = await import('./calc');
+    const t = totalsByPartida(
+      [{ hours: 4, cost_cents: 7200, partida_id: 'alb' }, { hours: 4, cost_cents: 7200, partida_id: 'pla' }, { hours: 8, cost_cents: 12800, partida_id: 'pla' }],
+      [{ cost_cents: 6300, partida_id: 'pla' }, { cost_cents: 1000 }],
+      [{ amount_cents: 5000, partida_id: 'borrada' }],
+      new Set(['alb', 'pla']),
+    );
+    expect(t.get('pla')).toEqual({ hours: 12, laborCents: 20000, materialsCents: 6300, expensesCents: 0, totalCents: 26300 });
+    expect(t.get('alb')!.totalCents).toBe(7200);
+    // Sin partida + partida que ya no existe
+    expect(t.get('')).toEqual({ hours: 0, laborCents: 0, materialsCents: 1000, expensesCents: 5000, totalCents: 6000 });
+    // Coste real por unidad: 3.000 € / 100 m² = 30 €/m²
+    expect(unitCost(300000, 100)).toBe(3000);
+    expect(unitCost(300000, null)).toBeNull();
+  });
+});
